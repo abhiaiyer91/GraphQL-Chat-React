@@ -1,6 +1,6 @@
 import React from 'react';
 import { ApolloProvider } from 'react-apollo';
-import client from './client';
+import client from './';
 
 export default function AppProvider({ children }) {
   return (

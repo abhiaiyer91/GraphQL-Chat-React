@@ -1,6 +1,6 @@
 import React from 'react';
-import AppProvider from './Provider';
-import Chatroom from './components/Chatroom';
+import AppProvider from './client/Provider';
+import Chatroom from './components';
 import './App.css';
 
 
