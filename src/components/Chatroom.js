@@ -1,6 +1,7 @@
 import React from 'react';
 import gql from 'graphql-tag';
-import {get} from 'lodash';
+import {get, find} from 'lodash';
+import update from 'immutability-helper';
 import {compose, withHandlers, withState, mapProps, lifecycle} from 'recompose';
 import {graphql} from 'react-apollo';
 
@@ -9,12 +10,19 @@ const chatrooms = gql`
   chatrooms {
     id
     title
-    messages {
-      id
-      text
-    }
   }
 }
+`;
+
+const chatroom = gql`
+  query chatRoom($id: Int!) {
+    chatroom(id: $id) {
+      messages {
+        id
+        text
+      }
+    }
+  }
 `;
 
 const messageAdded = gql`
@@ -27,7 +35,9 @@ const messageAdded = gql`
 `;
 
 let SendMessageButton = function SendMessageButton({sendMessage}) {
-  return <button className="button-item" onClick={sendMessage}>Send Message</button>;
+  return (
+    <button className="button-item" onClick={sendMessage}>Send Message</button>
+  );
 };
 
 const addMessage = gql`
@@ -41,13 +51,13 @@ const addMessage = gql`
 SendMessageButton = compose(
   graphql(addMessage),
   withHandlers({
-    sendMessage: ({setMessage, message, mutate}) => {
+    sendMessage: ({setMessage, id, message, mutate}) => {
       return e => {
         mutate({
           variables: {
             text: message,
             userId: 1,
-            chatroomId: 1,
+            chatroomId: id,
           },
         })
           .then(data => {
@@ -66,6 +76,7 @@ let MessageBox = function MessageBox({
   message,
   closeMessages,
   setMessage,
+  id,
 }) {
   return (
     <section>
@@ -77,7 +88,7 @@ let MessageBox = function MessageBox({
       />
       <div className="button-wrapper">
         <button className="button-item" onClick={closeMessages}>Cancel</button>
-        <SendMessageButton message={message} setMessage={setMessage} />
+        <SendMessageButton id={id} message={message} setMessage={setMessage} />
       </div>
     </section>
   );
@@ -94,13 +105,91 @@ MessageBox = compose(
   })
 )(MessageBox);
 
+let ChatMessages = function ChatMessages({
+  closeMessages,
+  ready,
+  title,
+  id,
+  messages,
+}) {
+  return (
+    <section>
+      <h1 className="title">{title}</h1>
+      {ready
+        ? messages.map(message => {
+            return (
+              <div key={message.id} className="message">
+                <p>{message.text}</p>
+              </div>
+            );
+          })
+        : null}
+      <MessageBox id={id} closeMessages={closeMessages} />
+    </section>
+  );
+};
+
+ChatMessages = compose(
+  graphql(chatroom, {
+    options: ({id}) => {
+      return {
+        variables: {
+          id,
+        },
+      };
+    },
+  }),
+  mapProps(({data, id, ...rest}) => {
+    const subscribeToMore = data && data.subscribeToMore;
+    const messages = data && data.chatroom && data.chatroom.messages;
+    return {
+      id,
+      ready: !data.loading,
+      messages,
+      subscribeToMessages: (): void => {
+        return subscribeToMore({
+          document: messageAdded,
+          variables: {
+            chatroomId: id,
+          },
+          onError: (e: Object): void => {
+            return console.error('APOLLO-CHAT', e);
+          },
+          updateQuery: (previousResult: Object, {subscriptionData}: Object): Object => {
+            if (!subscriptionData.data) {
+              return previousResult;
+            }
+
+            const messageToAdd = get(subscriptionData, 'data.messageAdded');
+
+
+            const newResult = update(previousResult, {
+              chatroom: {
+                messages: {
+                  $push: [messageToAdd],
+                },
+              },
+            });
+            return newResult;
+          },
+        });
+      },
+      ...rest,
+    };
+  }),
+  lifecycle({
+    componentWillMount() {
+      return this.props.subscribeToMessages();
+    },
+  })
+)(ChatMessages);
+
 let ChatroomRow = function ChatroomRow({
   closeMessages,
   openMessages,
   isActive,
   id,
   title,
-  messages = [],
 }) {
   if (!isActive) {
     return (
@@ -110,18 +199,7 @@ let ChatroomRow = function ChatroomRow({
     );
   }
 
-  return (
-    <section>
-      {messages.map(message => {
-        return (
-          <div className="message">
-            <p>{message.text}</p>
-          </div>
-        );
-      })}
-      <MessageBox closeMessages={closeMessages} />
-    </section>
-  );
+  return <ChatMessages closeMessages={closeMessages} title={title} id={id} />;
 };
 
 ChatroomRow = compose(
@@ -145,7 +223,7 @@ function Chatroom({chatrooms = []}) {
     <section>
       <h1 className="title">Chatrooms</h1>
       {chatrooms.map(room => {
-        return <ChatroomRow key={room.id} {...room} />;
+        return <ChatroomRow key={room.id} title={room.title} id={room.id} />;
       })}
     </section>
   );
@@ -154,44 +232,10 @@ function Chatroom({chatrooms = []}) {
 export default compose(
   graphql(chatrooms),
   mapProps(({data, ...rest}) => {
-    const subscribeToMore = data && data.subscribeToMore;
-    const chatrooms = data && data.chatrooms;
+    const chatrooms = (data && data.chatrooms) || [];
     return {
       chatrooms,
-      subscribeToMessages: (): void => {
-        return subscribeToMore({
-          document: messageAdded,
-          variables: {
-            chatroomId: 1,
-          },
-          onError: (e: Object): void => {
-            return console.error('APOLLO-CHAT', e);
-          },
-          updateQuery: (prev: Object, {subscriptionData}: Object): Object => {
-            if (!subscriptionData.data) {
-              return prev;
-            }
-
-            const messageToAdd = get(subscriptionData, 'data.messageAdded');
-
-            const chatRooms = prev.chatrooms[0];
-            const prevMessages = prev.chatrooms[0].messages;
-            const newMessages = [messageToAdd, ...prevMessages];
-
-            const newChatRooms = [
-              Object.assign({}, chatRooms, {messages: newMessages}),
-            ];
-
-            return Object.assign({}, {...prev, chatrooms: newChatRooms});
-          },
-        });
-      },
       ...rest,
     };
-  }),
-  lifecycle({
-    componentWillMount() {
-      return this.props.subscribeToMessages();
-    },
   })
 )(Chatroom);
