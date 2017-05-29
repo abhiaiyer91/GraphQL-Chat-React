@@ -7,8 +7,7 @@ import './App.css';
 export default function App() {
   return (
     <AppProvider>
-      <div className="App">
-
+      <div>
         <Chatroom />
       </div>
     </AppProvider>
